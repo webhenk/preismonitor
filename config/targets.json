@@ -1,0 +1,15 @@
+[
+  {
+    "id": "sample-hotel",
+    "url": "https://example.com/search?checkin={date}",
+    "date": "2024-12-31",
+    "rooms": [
+      {
+        "name": "Deluxe Queen",
+        "room_hint": "Deluxe Queen",
+        "price_regex": "/\\$([0-9,.]+)/",
+        "threshold": 150.00
+      }
+    ]
+  }
+]
