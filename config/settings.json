@@ -1,0 +1,10 @@
+{
+  "user_agent": "PreisMonitor/1.0",
+  "timeout_seconds": 20,
+  "email": {
+    "enabled": false,
+    "to": "alerts@example.com",
+    "from": "preis-monitor@localhost",
+    "subject_prefix": "[PreisMonitor]"
+  }
+}
