@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 class PriceParser
 {
-    public const DEFAULT_TOTAL_REGEX = '/(?:Gesamtpreis[^0-9]*|tcpPrice__value[^0-9]*)([0-9,.]+)/i';
-    public const DEFAULT_TOTAL_HINTS = ['Gesamtpreis', 'tcpPrice__value'];
+    public const DEFAULT_TOTAL_REGEX = '/Gesamtpreis[^0-9]*([0-9,.]+)/i';
+    private const FALLBACK_TOTAL_REGEXES = [
+        '/tcpPrice__value[^0-9]*([0-9,.]+)/i',
+    ];
 
     private array $settings;
 
@@ -86,10 +88,26 @@ class PriceParser
 
     public function extractTotalPrice(string $html, ?string $regex = null): ?array
     {
-        return $this->extractPrice($html, [
+        $priceInfo = $this->extractPrice($html, [
             'room_hint' => 'Gesamtpreis',
             'price_regex' => $regex ?? self::DEFAULT_TOTAL_REGEX,
         ]);
+
+        if ($priceInfo !== null || $regex !== null) {
+            return $priceInfo;
+        }
+
+        foreach (self::FALLBACK_TOTAL_REGEXES as $fallbackRegex) {
+            $priceInfo = $this->extractPrice($html, [
+                'room_hint' => 'tcpPrice__value',
+                'price_regex' => $fallbackRegex,
+            ]);
+            if ($priceInfo !== null) {
+                return $priceInfo;
+            }
+        }
+
+        return null;
     }
 
     public function extractPrice(string $html, array $room): ?array

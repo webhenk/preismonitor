@@ -193,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
                 }
 
                 if ($debugEnabled && $html !== null && $html !== '') {
-                    $hints = PriceParser::DEFAULT_TOTAL_HINTS;
+                    $hints = ['Gesamtpreis', 'tcpPrice__value'];
                     foreach ($hints as $hint) {
                         $debugHintPos = stripos($html, $hint);
                         if ($debugHintPos !== false) {
