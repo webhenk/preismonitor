@@ -192,7 +192,10 @@ async function main() {
   const priceResponses = [];
   const xhrDumps = [];
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     locale: 'de-DE',
     timezoneId: 'Europe/Berlin',
@@ -354,6 +357,7 @@ async function main() {
     error = 'did_not_render';
   }
 
+  const bodyTextPreview = !chosenPrice ? bodyText.slice(0, 1500) : null;
   const output = {
     runner: 'playwright',
     url_requested: url,
@@ -363,6 +367,7 @@ async function main() {
     consent_clicked: consentClicked,
     rendered_html_size: renderedHtmlSize,
     body_text_size: bodyTextSize,
+    body_text_preview: bodyTextPreview,
     xhr_hits: xhrHits.length,
     price_text: chosenPrice ? chosenPrice.priceText : null,
     price_value: chosenPrice ? chosenPrice.priceValue : null,
@@ -385,6 +390,7 @@ main().catch((error) => {
     consent_clicked: false,
     rendered_html_size: 0,
     body_text_size: 0,
+    body_text_preview: null,
     xhr_hits: 0,
     price_text: null,
     price_value: null,

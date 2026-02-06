@@ -1,0 +1,9 @@
+{
+  "name": "preismonitor",
+  "private": true,
+  "description": "PreisMonitor Playwright helpers",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}

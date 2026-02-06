@@ -201,56 +201,95 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
 
         if ($errors === []) {
             $resolvedUrl = $parser->interpolateUrl($urlInput, $dateInput);
+            $usePlaywright = $parser->isRobinsonBookingUrl($resolvedUrl);
 
             try {
-                $fetchResult = $parser->fetchPageWithInfo($resolvedUrl);
-                $html = $fetchResult['body'] ?? null;
-                $debugInfo = [
-                    'requested_url' => $resolvedUrl,
-                    'effective_url' => $fetchResult['effective_url'] ?? $resolvedUrl,
-                    'status' => $fetchResult['status'] ?? 0,
-                    'blocked' => $fetchResult['blocked'] ?? false,
-                    'content_type' => $fetchResult['content_type'] ?? '',
-                    'response_length' => $fetchResult['response_length'] ?? 0,
-                    'response_preview' => $fetchResult['response_preview'] ?? null,
-                    'title' => $fetchResult['title'] ?? null,
-                    'response_path' => $fetchResult['response_path'] ?? null,
-                    'size_download' => $fetchResult['size_download'] ?? 0.0,
-                    'total_time' => $fetchResult['total_time'] ?? 0.0,
-                    'error' => $fetchResult['error'] ?? null,
-                ];
+                if ($usePlaywright) {
+                    $fetchResult = $parser->runPlaywrightRobinson($resolvedUrl);
+                    $debugInfo = [
+                        'requested_url' => $resolvedUrl,
+                        'effective_url' => $fetchResult['url_effective'] ?? $resolvedUrl,
+                        'status' => $fetchResult['http_status'] ?? 0,
+                        'blocked' => $fetchResult['blocked'] ?? false,
+                        'runner' => $fetchResult['runner'] ?? 'playwright',
+                        'rendered_html_size' => $fetchResult['rendered_html_size'] ?? 0,
+                        'xhr_hits' => $fetchResult['xhr_hits'] ?? 0,
+                        'consent_clicked' => $fetchResult['consent_clicked'] ?? false,
+                        'body_text_preview' => $fetchResult['body_text_preview'] ?? null,
+                        'error' => $fetchResult['error'] ?? null,
+                    ];
 
-                if (!empty($fetchResult['error'])) {
-                    $errors[] = 'URL konnte nicht geladen werden: ' . (string)$fetchResult['error'];
-                } elseif (!empty($fetchResult['blocked'])) {
-                    $errors[] = 'URL konnte nicht geladen werden: blocked';
-                } elseif (($fetchResult['status'] ?? 0) >= 400) {
-                    $errors[] = 'URL konnte nicht geladen werden: HTTP ' . (string)$fetchResult['status'];
-                } elseif ($html === null || $html === '') {
-                    $errors[] = 'URL konnte nicht geladen werden: Leere Antwort.';
-                }
-
-                if ($debugEnabled && $html !== null && $html !== '') {
-                    $hint = 'Gesamtpreis';
-                    $debugHintPos = stripos($html, $hint);
-                    if ($debugHintPos !== false) {
-                        $debugSnippet = substr($html, max(0, $debugHintPos - 300), 900);
-                    } else {
-                        $debugSnippet = substr($html, 0, 900);
+                    $httpStatus = (int)($fetchResult['http_status'] ?? 0);
+                    if (!empty($fetchResult['error']) && $fetchResult['error'] !== 'did_not_render') {
+                        $errors[] = 'URL konnte nicht geladen werden: ' . (string)$fetchResult['error'];
+                    } elseif (!empty($fetchResult['blocked'])) {
+                        $errors[] = 'URL konnte nicht geladen werden: blocked';
+                    } elseif ($httpStatus >= 400) {
+                        $errors[] = 'URL konnte nicht geladen werden: HTTP ' . (string)$httpStatus;
                     }
-                    $debugSnippet = trim((string)preg_replace('/\s+/', ' ', $debugSnippet));
-                }
 
-                if ($errors === []) {
-                    $priceInfo = $parser->extractTotalPrice($html);
-                    if ($priceInfo === null) {
-                        $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
-                    } else {
-                        $result = [
-                            'raw' => $priceInfo['raw'] ?? '',
-                            'value' => $priceInfo['value'] ?? null,
-                            'url' => $resolvedUrl,
-                        ];
+                    if ($errors === []) {
+                        $priceInfo = $fetchResult['price'] ?? null;
+                        if ($priceInfo === null) {
+                            $errors[] = 'Kein Gesamtpreis gefunden. Bitte Seite prüfen.';
+                        } else {
+                            $result = [
+                                'raw' => $priceInfo['raw'] ?? '',
+                                'value' => $priceInfo['value'] ?? null,
+                                'url' => $resolvedUrl,
+                            ];
+                        }
+                    }
+                } else {
+                    $fetchResult = $parser->fetchPageWithInfo($resolvedUrl);
+                    $html = $fetchResult['body'] ?? null;
+                    $debugInfo = [
+                        'requested_url' => $resolvedUrl,
+                        'effective_url' => $fetchResult['effective_url'] ?? $resolvedUrl,
+                        'status' => $fetchResult['status'] ?? 0,
+                        'blocked' => $fetchResult['blocked'] ?? false,
+                        'content_type' => $fetchResult['content_type'] ?? '',
+                        'response_length' => $fetchResult['response_length'] ?? 0,
+                        'response_preview' => $fetchResult['response_preview'] ?? null,
+                        'title' => $fetchResult['title'] ?? null,
+                        'response_path' => $fetchResult['response_path'] ?? null,
+                        'size_download' => $fetchResult['size_download'] ?? 0.0,
+                        'total_time' => $fetchResult['total_time'] ?? 0.0,
+                        'error' => $fetchResult['error'] ?? null,
+                    ];
+
+                    if (!empty($fetchResult['error'])) {
+                        $errors[] = 'URL konnte nicht geladen werden: ' . (string)$fetchResult['error'];
+                    } elseif (!empty($fetchResult['blocked'])) {
+                        $errors[] = 'URL konnte nicht geladen werden: blocked';
+                    } elseif (($fetchResult['status'] ?? 0) >= 400) {
+                        $errors[] = 'URL konnte nicht geladen werden: HTTP ' . (string)$fetchResult['status'];
+                    } elseif ($html === null || $html === '') {
+                        $errors[] = 'URL konnte nicht geladen werden: Leere Antwort.';
+                    }
+
+                    if ($debugEnabled && $html !== null && $html !== '') {
+                        $hint = 'Gesamtpreis';
+                        $debugHintPos = stripos($html, $hint);
+                        if ($debugHintPos !== false) {
+                            $debugSnippet = substr($html, max(0, $debugHintPos - 300), 900);
+                        } else {
+                            $debugSnippet = substr($html, 0, 900);
+                        }
+                        $debugSnippet = trim((string)preg_replace('/\s+/', ' ', $debugSnippet));
+                    }
+
+                    if ($errors === []) {
+                        $priceInfo = $parser->extractTotalPrice($html);
+                        if ($priceInfo === null) {
+                            $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
+                        } else {
+                            $result = [
+                                'raw' => $priceInfo['raw'] ?? '',
+                                'value' => $priceInfo['value'] ?? null,
+                                'url' => $resolvedUrl,
+                            ];
+                        }
                     }
                 }
             } catch (RuntimeException $exception) {
@@ -319,6 +358,7 @@ foreach ($historyByMonitor as &$entries) {
     );
 }
 unset($entries);
+$isPlaywrightDebug = $debugInfo !== null && ($debugInfo['runner'] ?? '') === 'playwright';
 ?>
 <!DOCTYPE html>
 <html lang="de">
@@ -489,22 +529,35 @@ unset($entries);
                     <li>URL (angefragt): <?= h((string)$debugInfo['requested_url']) ?></li>
                     <li>URL (effektiv): <?= h((string)$debugInfo['effective_url']) ?></li>
                     <li>HTTP-Status: <?= h((string)$debugInfo['status']) ?></li>
-                    <li>Content-Type: <?= h((string)$debugInfo['content_type']) ?></li>
-                    <li>Response-Länge: <?= h((string)$debugInfo['response_length']) ?> bytes</li>
-                    <li>Title: <?= h((string)($debugInfo['title'] ?? '—')) ?></li>
-                    <li>Response gespeichert: <?= h((string)($debugInfo['response_path'] ?? '—')) ?></li>
-                    <li>Antwortgröße: <?= h((string)round((float)$debugInfo['size_download'])) ?> bytes</li>
-                    <li>Antwortzeit: <?= h((string)round((float)$debugInfo['total_time'], 3)) ?> s</li>
+                    <?php if ($isPlaywrightDebug): ?>
+                        <li>Runner: <?= h((string)$debugInfo['runner']) ?></li>
+                        <li>Rendered HTML size: <?= h((string)$debugInfo['rendered_html_size']) ?> bytes</li>
+                        <li>XHR Hits: <?= h((string)$debugInfo['xhr_hits']) ?></li>
+                        <li>Consent clicked: <?= h((string)($debugInfo['consent_clicked'] ? 'ja' : 'nein')) ?></li>
+                    <?php else: ?>
+                        <li>Content-Type: <?= h((string)$debugInfo['content_type']) ?></li>
+                        <li>Response-Länge: <?= h((string)$debugInfo['response_length']) ?> bytes</li>
+                        <li>Title: <?= h((string)($debugInfo['title'] ?? '—')) ?></li>
+                        <li>Response gespeichert: <?= h((string)($debugInfo['response_path'] ?? '—')) ?></li>
+                        <li>Antwortgröße: <?= h((string)round((float)$debugInfo['size_download'])) ?> bytes</li>
+                        <li>Antwortzeit: <?= h((string)round((float)$debugInfo['total_time'], 3)) ?> s</li>
+                    <?php endif; ?>
                     <li>Fehler: <?= h((string)($debugInfo['error'] ?? '—')) ?></li>
-                    <li>Hinweistext "Gesamtpreis" gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
+                    <?php if (!$isPlaywrightDebug): ?>
+                        <li>Hinweistext "Gesamtpreis" gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
+                    <?php endif; ?>
                 </ul>
-                <?php if (!empty($debugInfo['response_preview'])): ?>
+                <?php if (!$isPlaywrightDebug && !empty($debugInfo['response_preview'])): ?>
                     <strong>Erste 500 Zeichen</strong>
                     <pre><?= h((string)$debugInfo['response_preview']) ?></pre>
                 <?php endif; ?>
-                <?php if ($debugSnippet !== null && $debugSnippet !== ''): ?>
+                <?php if (!$isPlaywrightDebug && $debugSnippet !== null && $debugSnippet !== ''): ?>
                     <strong>HTML-Ausschnitt</strong>
                     <pre><?= h($debugSnippet) ?></pre>
+                <?php endif; ?>
+                <?php if ($isPlaywrightDebug && $result === null && !empty($debugInfo['body_text_preview'])): ?>
+                    <strong>Body-Text Preview (1500 Zeichen)</strong>
+                    <pre><?= h((string)$debugInfo['body_text_preview']) ?></pre>
                 <?php endif; ?>
             </div>
         <?php endif; ?>
