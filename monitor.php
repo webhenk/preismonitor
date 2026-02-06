@@ -5,6 +5,8 @@ declare(strict_types=1);
 const CONFIG_DIR = __DIR__ . '/config';
 const DATA_DIR = __DIR__ . '/data';
 
+require __DIR__ . '/src/PriceParser.php';
+
 function readJson(string $path): array
 {
     if (!file_exists($path)) {
@@ -29,80 +31,6 @@ function ensureDirectory(string $path): void
     if (!is_dir($path) && !mkdir($path, 0755, true) && !is_dir($path)) {
         throw new RuntimeException("Unable to create directory: {$path}");
     }
-}
-
-function interpolateUrl(string $url, string $date): string
-{
-    return str_replace('{date}', $date, $url);
-}
-
-function fetchPage(string $url, array $settings): string
-{
-    $userAgent = $settings['user_agent'] ?? 'PreisMonitor/1.0 (+https://example.com)';
-    $timeout = (int)($settings['timeout_seconds'] ?? 20);
-
-    $ch = curl_init($url);
-    if ($ch === false) {
-        throw new RuntimeException("Unable to initialize curl for {$url}");
-    }
-
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_USERAGENT => $userAgent,
-        CURLOPT_TIMEOUT => $timeout,
-        CURLOPT_CONNECTTIMEOUT => $timeout,
-    ]);
-
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($response === false) {
-        throw new RuntimeException("Request failed for {$url}: {$error}");
-    }
-
-    if ($status >= 400) {
-        throw new RuntimeException("HTTP {$status} for {$url}");
-    }
-
-    return $response;
-}
-
-function extractPrice(string $html, array $room): ?array
-{
-    $regex = $room['price_regex'] ?? null;
-    if (!$regex) {
-        throw new RuntimeException('Missing price_regex for room entry.');
-    }
-
-    $subject = $html;
-    $roomHint = $room['room_hint'] ?? null;
-    if ($roomHint) {
-        $pos = stripos($html, $roomHint);
-        if ($pos !== false) {
-            $subject = substr($html, max(0, $pos - 500), 2000);
-        }
-    }
-
-    if (!preg_match($regex, $subject, $matches)) {
-        return null;
-    }
-
-    $raw = $matches[1] ?? $matches[0];
-    $normalized = preg_replace('/[^0-9,\.]/', '', $raw);
-    if ($normalized === null || $normalized === '') {
-        return null;
-    }
-
-    $normalized = str_replace(['.', ' '], ['', ''], $normalized);
-    $normalized = str_replace(',', '.', $normalized);
-
-    return [
-        'raw' => $raw,
-        'value' => (float)$normalized,
-    ];
 }
 
 function writeDailyResult(array $entries): string
@@ -168,20 +96,21 @@ function main(): void
 {
     $settings = readJson(CONFIG_DIR . '/settings.json');
     $targets = readJson(CONFIG_DIR . '/targets.json');
+    $parser = new PriceParser($settings);
 
     $entries = [];
 
     foreach ($targets as $target) {
         $targetId = $target['id'] ?? 'unknown';
         $date = $target['date'] ?? (new DateTimeImmutable('now'))->format('Y-m-d');
-        $url = interpolateUrl($target['url'], $date);
+        $url = $parser->interpolateUrl($target['url'], $date);
 
         echo "Fetching {$targetId}..." . PHP_EOL;
-        $html = fetchPage($url, $settings);
+        $html = $parser->fetchPage($url);
 
         foreach ($target['rooms'] ?? [] as $room) {
             $roomName = $room['name'] ?? 'Unnamed room';
-            $priceInfo = extractPrice($html, $room);
+            $priceInfo = $parser->extractPrice($html, $room);
 
             $entry = [
                 'timestamp' => (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM),
