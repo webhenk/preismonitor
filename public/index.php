@@ -134,6 +134,7 @@ $debugEnabled = false;
 $debugInfo = null;
 $debugSnippet = null;
 $debugHintPos = null;
+$debugHintLabel = null;
 $actionMessage = null;
 
 try {
