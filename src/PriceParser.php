@@ -280,13 +280,13 @@ class PriceParser
         }
 
         $blocked = (bool)($decoded['blocked'] ?? false);
-        $priceValue = $decoded['priceValue'] ?? null;
+        $priceValue = $decoded['price_value'] ?? null;
         $state = ($blocked || $priceValue === null) ? 'dynamic_no_price' : 'ok';
         $error = $decoded['error'] ?? ($exitCode !== 0 ? 'Playwright runner failed.' : null);
         $price = null;
         if ($priceValue !== null) {
             $price = [
-                'raw' => $decoded['priceText'] ?? null,
+                'raw' => $decoded['price_text'] ?? null,
                 'value' => (float)$priceValue,
                 'currency' => $decoded['currency'] ?? null,
             ];
@@ -299,9 +299,10 @@ class PriceParser
             'body' => [
                 'price' => $price,
                 'blocked' => $blocked,
-                'htmlPath' => $decoded['htmlPath'] ?? null,
-                'screenshotPath' => $decoded['screenshotPath'] ?? null,
-                'xhrHitsCount' => $decoded['xhrHitsCount'] ?? 0,
+                'xhrHitsCount' => $decoded['xhr_hits'] ?? 0,
+                'urlRequested' => $decoded['url_requested'] ?? null,
+                'urlEffective' => $decoded['url_effective'] ?? null,
+                'httpStatus' => $decoded['http_status'] ?? null,
             ],
             'blocked' => $blocked,
         ];
