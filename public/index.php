@@ -130,6 +130,11 @@ $addedTargetId = null;
 $urlInput = '';
 $dateInput = '';
 $addToMonitor = false;
+$debugEnabled = false;
+$debugInfo = null;
+$debugSnippet = null;
+$debugHintPos = null;
+$debugHintLabel = null;
 $actionMessage = null;
 
 try {
@@ -153,6 +158,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
         $urlInput = trim((string)($_POST['url'] ?? ''));
         $dateInput = trim((string)($_POST['date'] ?? ''));
         $addToMonitor = isset($_POST['add_to_monitor']);
+        $debugEnabled = isset($_POST['debug']);
 
         if ($urlInput === '' || filter_var($urlInput, FILTER_VALIDATE_URL) === false) {
             $errors[] = 'Bitte eine gültige URL angeben.';
@@ -166,16 +172,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
             $resolvedUrl = $parser->interpolateUrl($urlInput, $dateInput);
 
             try {
-                $html = $parser->fetchPage($resolvedUrl);
-                $priceInfo = $parser->extractTotalPrice($html);
-                if ($priceInfo === null) {
-                    $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
-                } else {
-                    $result = [
-                        'raw' => $priceInfo['raw'] ?? '',
-                        'value' => $priceInfo['value'] ?? null,
-                        'url' => $resolvedUrl,
-                    ];
+                $fetchResult = $parser->fetchPageWithInfo($resolvedUrl);
+                $html = $fetchResult['body'] ?? null;
+                $debugInfo = [
+                    'requested_url' => $resolvedUrl,
+                    'effective_url' => $fetchResult['effective_url'] ?? $resolvedUrl,
+                    'status' => $fetchResult['status'] ?? 0,
+                    'content_type' => $fetchResult['content_type'] ?? '',
+                    'size_download' => $fetchResult['size_download'] ?? 0.0,
+                    'total_time' => $fetchResult['total_time'] ?? 0.0,
+                    'error' => $fetchResult['error'] ?? null,
+                ];
+
+                if (!empty($fetchResult['error'])) {
+                    $errors[] = 'URL konnte nicht geladen werden: ' . (string)$fetchResult['error'];
+                } elseif (($fetchResult['status'] ?? 0) >= 400) {
+                    $errors[] = 'URL konnte nicht geladen werden: HTTP ' . (string)$fetchResult['status'];
+                } elseif ($html === null || $html === '') {
+                    $errors[] = 'URL konnte nicht geladen werden: Leere Antwort.';
+                }
+
+                if ($debugEnabled && $html !== null && $html !== '') {
+                    $hints = PriceParser::DEFAULT_TOTAL_HINTS;
+                    foreach ($hints as $hint) {
+                        $debugHintPos = stripos($html, $hint);
+                        if ($debugHintPos !== false) {
+                            $debugHintLabel = $hint;
+                            break;
+                        }
+                    }
+                    if ($debugHintPos !== null && $debugHintPos !== false) {
+                        $debugSnippet = substr($html, max(0, $debugHintPos - 300), 900);
+                    } else {
+                        $debugSnippet = substr($html, 0, 900);
+                    }
+                    $debugSnippet = trim((string)preg_replace('/\s+/', ' ', $debugSnippet));
+                }
+
+                if ($errors === []) {
+                    $priceInfo = $parser->extractTotalPrice($html);
+                    if ($priceInfo === null) {
+                        $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
+                    } else {
+                        $result = [
+                            'raw' => $priceInfo['raw'] ?? '',
+                            'value' => $priceInfo['value'] ?? null,
+                            'url' => $resolvedUrl,
+                        ];
+                    }
                 }
             } catch (RuntimeException $exception) {
                 $errors[] = $exception->getMessage();
@@ -334,6 +378,19 @@ unset($entries);
             gap: 0.5rem;
             flex-wrap: wrap;
         }
+        .debug {
+            background: #f3f6ff;
+            border: 1px dashed #8aa0e6;
+        }
+        .debug pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 240px;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid #e0e4f7;
+            padding: 0.6rem;
+        }
     </style>
 </head>
 <body>
@@ -354,6 +411,10 @@ unset($entries);
             <label>
                 <input type="checkbox" name="add_to_monitor" <?= $addToMonitor ? 'checked' : '' ?>>
                 Monitoring aktivieren (täglicher Check)
+            </label>
+            <label>
+                <input type="checkbox" name="debug" <?= $debugEnabled ? 'checked' : '' ?>>
+                Debug-Infos anzeigen
             </label>
             <button type="submit">Analyse</button>
         </form>
@@ -385,6 +446,26 @@ unset($entries);
                 </ul>
                 <?php if ($addedTargetId !== null): ?>
                     <p class="meta">Monitoring gespeichert: <?= h($addedTargetId) ?></p>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($debugEnabled && $debugInfo !== null): ?>
+            <div class="notice debug">
+                <strong>Debug-Informationen</strong>
+                <ul class="result-list">
+                    <li>URL (angefragt): <?= h((string)$debugInfo['requested_url']) ?></li>
+                    <li>URL (effektiv): <?= h((string)$debugInfo['effective_url']) ?></li>
+                    <li>HTTP-Status: <?= h((string)$debugInfo['status']) ?></li>
+                    <li>Content-Type: <?= h((string)$debugInfo['content_type']) ?></li>
+                    <li>Antwortgröße: <?= h((string)round((float)$debugInfo['size_download'])) ?> bytes</li>
+                    <li>Antwortzeit: <?= h((string)round((float)$debugInfo['total_time'], 3)) ?> s</li>
+                    <li>Fehler: <?= h((string)($debugInfo['error'] ?? '—')) ?></li>
+                    <li>Hinweistext gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (' . h((string)$debugHintLabel) . ', Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
+                </ul>
+                <?php if ($debugSnippet !== null && $debugSnippet !== ''): ?>
+                    <strong>HTML-Ausschnitt</strong>
+                    <pre><?= h($debugSnippet) ?></pre>
                 <?php endif; ?>
             </div>
         <?php endif; ?>
