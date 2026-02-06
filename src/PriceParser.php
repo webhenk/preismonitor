@@ -26,26 +26,27 @@ class PriceParser
         return str_replace('{date}', $date, $url);
     }
 
-    public function fetchPage(string $url): string
+    public function fetchPage(string $url): array
     {
         $result = $this->fetchPageWithInfo($url);
         $error = $result['error'];
-        $status = $result['status'];
+        $status = (int)($result['status'] ?? 0);
         $body = $result['body'];
+        $blocked = (bool)($result['blocked'] ?? false);
 
-        if ($error !== null) {
-            throw new RuntimeException("Request failed for {$url}: {$error}");
+        if ($blocked) {
+            $result['state'] = 'blocked';
+        } elseif ($error !== null) {
+            $result['state'] = 'error';
+        } elseif ($status >= 400) {
+            $result['state'] = 'http_error';
+        } elseif ($body === null || $body === '') {
+            $result['state'] = 'empty';
+        } else {
+            $result['state'] = 'ok';
         }
 
-        if ($status >= 400) {
-            throw new RuntimeException("HTTP {$status} for {$url}");
-        }
-
-        if ($body === null || $body === '') {
-            throw new RuntimeException("Empty response body for {$url}");
-        }
-
-        return $body;
+        return $result;
     }
 
     public function fetchPageWithInfo(string $url): array
@@ -101,6 +102,9 @@ class PriceParser
         $effectiveUrl = (string)($info['url'] ?? $url);
         curl_close($ch);
 
+        $blocked = false;
+        if ($response !== false && $response !== null && $response !== '') {
+            $blocked = $this->isBlockedHtml($response);
         $responseLength = $response === false ? 0 : strlen($response);
         $responsePreview = $response === false ? null : substr($response, 0, 500);
         $title = null;
@@ -123,11 +127,33 @@ class PriceParser
             'total_time' => $totalTime,
             'size_download' => $sizeDownload,
             'effective_url' => $effectiveUrl,
+            'blocked' => $blocked,
             'response_length' => $responseLength,
             'response_preview' => $responsePreview,
             'title' => $title,
             'response_path' => $responsePath,
         ];
+    }
+
+    public function isBlockedHtml(string $html): bool
+    {
+        $signals = [
+            'captcha',
+            'access denied',
+            'enable javascript',
+            'verify you are human',
+            'unusual traffic',
+            'bot detection',
+            'attention required',
+        ];
+
+        foreach ($signals as $signal) {
+            if (stripos($html, $signal) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function extractTotalPrice(string $html, ?string $regex = null): ?array
