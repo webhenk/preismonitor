@@ -202,6 +202,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
                         }
                     }
                     if ($debugHintPos !== null && $debugHintPos !== false) {
+                    $hint = 'Gesamtpreis';
+                    $debugHintPos = stripos($html, $hint);
+                    if ($debugHintPos !== false) {
                         $debugSnippet = substr($html, max(0, $debugHintPos - 300), 900);
                     } else {
                         $debugSnippet = substr($html, 0, 900);
@@ -462,6 +465,7 @@ unset($entries);
                     <li>Antwortzeit: <?= h((string)round((float)$debugInfo['total_time'], 3)) ?> s</li>
                     <li>Fehler: <?= h((string)($debugInfo['error'] ?? '—')) ?></li>
                     <li>Hinweistext gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (' . h((string)$debugHintLabel) . ', Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
+                    <li>Hinweistext "Gesamtpreis" gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
                 </ul>
                 <?php if ($debugSnippet !== null && $debugSnippet !== ''): ?>
                     <strong>HTML-Ausschnitt</strong>
