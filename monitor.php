@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 const CONFIG_DIR = __DIR__ . '/config';
 const DATA_DIR = __DIR__ . '/data';
+const DEFAULT_PRICE_REGEX = '/[€$£]?\s*([0-9]{1,3}(?:[.,\s][0-9]{3})*(?:[.,][0-9]{2})?|[0-9]+(?:[.,][0-9]{2})?)/';
 
 function readJson(string $path): array
 {
@@ -70,11 +71,24 @@ function fetchPage(string $url, array $settings): string
     return $response;
 }
 
-function extractPrice(string $html, array $room): ?array
+function normalizePriceValue(string $raw): ?float
 {
-    $regex = $room['price_regex'] ?? null;
+    $normalized = preg_replace('/[^0-9,\.]/', '', $raw);
+    if ($normalized === null || $normalized === '') {
+        return null;
+    }
+
+    $normalized = str_replace(['.', ' '], ['', ''], $normalized);
+    $normalized = str_replace(',', '.', $normalized);
+
+    return (float)$normalized;
+}
+
+function extractTotalPrice(string $html, array $room): ?array
+{
+    $regex = $room['price_regex'] ?? DEFAULT_PRICE_REGEX;
     if (!$regex) {
-        throw new RuntimeException('Missing price_regex for room entry.');
+        $regex = DEFAULT_PRICE_REGEX;
     }
 
     $subject = $html;
@@ -91,18 +105,20 @@ function extractPrice(string $html, array $room): ?array
     }
 
     $raw = $matches[1] ?? $matches[0];
-    $normalized = preg_replace('/[^0-9,\.]/', '', $raw);
-    if ($normalized === null || $normalized === '') {
+    $normalized = normalizePriceValue($raw);
+    if ($normalized === null) {
         return null;
     }
 
-    $normalized = str_replace(['.', ' '], ['', ''], $normalized);
-    $normalized = str_replace(',', '.', $normalized);
-
     return [
         'raw' => $raw,
-        'value' => (float)$normalized,
+        'value' => $normalized,
     ];
+}
+
+function extractPrice(string $html, array $room): ?array
+{
+    return extractTotalPrice($html, $room);
 }
 
 function writeDailyResult(array $entries): string
@@ -181,7 +197,7 @@ function main(): void
 
         foreach ($target['rooms'] ?? [] as $room) {
             $roomName = $room['name'] ?? 'Unnamed room';
-            $priceInfo = extractPrice($html, $room);
+            $priceInfo = extractTotalPrice($html, $room);
 
             $entry = [
                 'timestamp' => (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM),

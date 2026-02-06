@@ -55,7 +55,7 @@ All settings live in `config/` and are file-based (no SQL database required).
 - `rooms`: List of room definitions.
   - `name`: Room name label.
   - `room_hint`: Optional text snippet to narrow the search region in the HTML.
-  - `price_regex`: Regex used to extract the price (capture group 1 preferred).
+  - `price_regex`: Optional regex used to extract the total price. If omitted, a default currency pattern is used. Capture group 1 should contain the numeric value to normalize.
   - `threshold`: Optional alert threshold for triggering emails.
 
 ## Usage
@@ -79,4 +79,5 @@ Enable alerts in `config/settings.json` by setting `email.enabled` to `true`, th
 ## Notes
 
 - Each room can use a unique regex to match the relevant HTML.
+- Custom regexes should expose the numeric value in capture group 1 (e.g., `/€\\s*([0-9,.]+)/`) so the parser can normalize it.
 - This tool does not parse dynamic JavaScript-rendered content. For JS-heavy sites, consider a dedicated scraping workflow.
