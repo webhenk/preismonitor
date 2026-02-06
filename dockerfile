@@ -9,5 +9,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY . /app
 
-# Default: CLI ausführen
-CMD ["php", "monitor.php"]
+EXPOSE 8080
+
+# Web-UI starten
+CMD ["php", "-S", "0.0.0.0:8080", "-t", "public"]

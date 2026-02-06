@@ -1,82 +1,51 @@
 # PreisMonitor
 
-PreisMonitor is a lightweight PHP CLI tool that monitors hotel/room prices on booking pages for a specific date and stores daily results in plain text files.
+PreisMonitor ist jetzt eine **Web-UI** zum Analysieren und Überwachen von Hotel-/Zimmerpreisen. Du gibst eine URL ein, klickst auf **Analyse** und bekommst den Preis. Optional kannst du das Monitoring aktivieren, damit der Preis täglich geprüft und persistent gespeichert wird.
 
-## Requirements
+## Anforderungen
 
 - PHP 8.1+
-- cURL extension enabled
-- `mail()` configured on the host (for email alerts)
+- cURL Extension aktiviert
 
-## Configuration
+## Lokaler Start (Web UI)
 
-All settings live in `config/` and are file-based (no SQL database required).
+```bash
+php -S 0.0.0.0:8080 -t public
+```
 
-### `config/settings.json`
+Danach unter `http://localhost:8080` öffnen.
+
+## Docker (Webservice)
+
+```bash
+docker build -t preismonitor .
+docker run --rm -p 8080:8080 preismonitor
+```
+
+## Monitoring (täglicher Check)
+
+Die tägliche Prüfung läuft über einen Cron-Job. Der Webservice stellt dafür den Endpoint `/cron.php` bereit:
+
+```
+GET /cron.php
+```
+
+Beispiel für Render:
+- Webservice startet mit dem Dockerfile.
+- Separater Render Cron Job ruft täglich `https://<dein-service>.onrender.com/cron.php` auf.
+
+Die Daten werden persistent in `data/` gespeichert:
+
+- `data/monitors.json` (Monitoring-URLs)
+- `data/history.json` (Preis-Historie)
+
+## Konfiguration
+
+Alle Einstellungen liegen in `config/settings.json` (z. B. User-Agent, Timeout).
 
 ```json
 {
   "user_agent": "PreisMonitor/1.0",
-  "timeout_seconds": 20,
-  "email": {
-    "enabled": false,
-    "to": "alerts@example.com",
-    "from": "preis-monitor@localhost",
-    "subject_prefix": "[PreisMonitor]"
-  }
+  "timeout_seconds": 20
 }
 ```
-
-### `config/targets.json`
-
-```json
-[
-  {
-    "id": "sample-hotel",
-    "url": "https://example.com/search?checkin={date}",
-    "date": "2024-12-31",
-    "rooms": [
-      {
-        "name": "Deluxe Queen",
-        "room_hint": "Deluxe Queen",
-        "price_regex": "/\\$([0-9,.]+)/",
-        "threshold": 150.00
-      }
-    ]
-  }
-]
-```
-
-**Fields**
-
-- `id`: Identifier for the hotel or booking source.
-- `url`: URL to monitor. Use `{date}` as a placeholder for the date.
-- `date`: Date to query (YYYY-MM-DD). Omit to default to today.
-- `rooms`: List of room definitions.
-  - `name`: Room name label.
-  - `room_hint`: Optional text snippet to narrow the search region in the HTML.
-  - `price_regex`: Regex used to extract the price (capture group 1 preferred).
-  - `threshold`: Optional alert threshold for triggering emails.
-
-## Usage
-
-Run the CLI script:
-
-```bash
-php monitor.php
-```
-
-Results are stored daily in `data/YYYY-MM-DD.txt` as pipe-delimited lines:
-
-```
-2024-03-31T10:00:00+00:00 | sample-hotel | Deluxe Queen | $129.00 | 129 | https://example.com/search?checkin=2024-12-31
-```
-
-## Email Alerts
-
-Enable alerts in `config/settings.json` by setting `email.enabled` to `true`, then configure `to` and `from`. When a price is found at or below the `threshold` defined for a room, the tool triggers `mail()`.
-
-## Notes
-
-- Each room can use a unique regex to match the relevant HTML.
-- This tool does not parse dynamic JavaScript-rendered content. For JS-heavy sites, consider a dedicated scraping workflow.

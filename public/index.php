@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 const CONFIG_DIR = __DIR__ . '/../config';
+const DATA_DIR = __DIR__ . '/../data';
 
 require __DIR__ . '/../src/PriceParser.php';
+require __DIR__ . '/../src/MonitorStorage.php';
 
 function readJson(string $path): array
 {
@@ -23,18 +25,6 @@ function readJson(string $path): array
     }
 
     return $decoded;
-}
-
-function writeJson(string $path, array $payload): void
-{
-    $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    if ($encoded === false) {
-        throw new RuntimeException('Unable to encode JSON payload.');
-    }
-
-    if (file_put_contents($path, $encoded . PHP_EOL) === false) {
-        throw new RuntimeException("Unable to write config file: {$path}");
-    }
 }
 
 function h(string $value): string
@@ -83,112 +73,205 @@ function generateTargetId(string $url, array $targets, ?string $date): string
     return $candidate;
 }
 
+function runMonitorChecks(array $monitors, PriceParser $parser, MonitorStorage $storage): array
+{
+    $now = new DateTimeImmutable('now');
+
+    foreach ($monitors as &$monitor) {
+        if (!($monitor['active'] ?? false)) {
+            continue;
+        }
+
+        $date = (string)($monitor['date'] ?? '');
+        $resolvedUrl = $parser->interpolateUrl((string)$monitor['url'], $date);
+
+        try {
+            $html = $parser->fetchPage($resolvedUrl);
+            $priceInfo = $parser->extractTotalPrice($html, $monitor['price_regex'] ?? null);
+
+            if ($priceInfo === null) {
+                throw new RuntimeException('Kein Gesamtpreis gefunden.');
+            }
+
+            $storage->addHistory([
+                'id' => $monitor['id'],
+                'url' => $monitor['url'],
+                'resolved_url' => $resolvedUrl,
+                'checked_at' => $now->format(DateTimeInterface::ATOM),
+                'raw' => $priceInfo['raw'] ?? '',
+                'value' => $priceInfo['value'] ?? null,
+            ]);
+
+            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
+            $monitor['last_value'] = $priceInfo['value'] ?? null;
+        } catch (RuntimeException $exception) {
+            $storage->addHistory([
+                'id' => $monitor['id'],
+                'url' => $monitor['url'],
+                'resolved_url' => $resolvedUrl,
+                'checked_at' => $now->format(DateTimeInterface::ATOM),
+                'error' => $exception->getMessage(),
+            ]);
+
+            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
+            $monitor['last_error'] = $exception->getMessage();
+        }
+    }
+    unset($monitor);
+
+    $storage->saveMonitors($monitors);
+
+    return $monitors;
+}
+
 $errors = [];
 $result = null;
 $addedTargetId = null;
 $urlInput = '';
 $dateInput = '';
 $addToMonitor = false;
+$actionMessage = null;
 
 try {
     $settings = readJson(CONFIG_DIR . '/settings.json');
-    $targets = readJson(CONFIG_DIR . '/targets.json');
     $parser = new PriceParser($settings);
+    $storage = new MonitorStorage(DATA_DIR);
+    $monitors = $storage->getMonitors();
+    $history = $storage->getHistory();
 } catch (RuntimeException $exception) {
     $errors[] = $exception->getMessage();
-    $settings = [];
-    $targets = [];
     $parser = null;
+    $storage = null;
+    $monitors = [];
+    $history = [];
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser) {
-    $urlInput = trim((string)($_POST['url'] ?? ''));
-    $dateInput = trim((string)($_POST['date'] ?? ''));
-    $addToMonitor = isset($_POST['add_to_monitor']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $storage instanceof MonitorStorage) {
+    $action = (string)($_POST['action'] ?? '');
 
-    if ($urlInput === '' || filter_var($urlInput, FILTER_VALIDATE_URL) === false) {
-        $errors[] = 'Bitte eine gültige URL angeben.';
-    }
+    if ($action === 'analyze') {
+        $urlInput = trim((string)($_POST['url'] ?? ''));
+        $dateInput = trim((string)($_POST['date'] ?? ''));
+        $addToMonitor = isset($_POST['add_to_monitor']);
 
-    if ($dateInput !== '' && !isValidDate($dateInput)) {
-        $errors[] = 'Bitte ein gültiges Datum im Format YYYY-MM-DD angeben.';
-    }
-
-    if ($errors === []) {
-        $resolvedUrl = $parser->interpolateUrl($urlInput, $dateInput);
-
-        try {
-            $html = $parser->fetchPage($resolvedUrl);
-        } catch (RuntimeException $exception) {
-            $errors[] = $exception->getMessage();
-            $html = null;
+        if ($urlInput === '' || filter_var($urlInput, FILTER_VALIDATE_URL) === false) {
+            $errors[] = 'Bitte eine gültige URL angeben.';
         }
 
-        if ($html !== null) {
-            $priceInfo = $parser->extractTotalPrice($html);
-            if ($priceInfo === null) {
-                $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
-            } else {
-                $result = [
-                    'raw' => $priceInfo['raw'] ?? '',
-                    'value' => $priceInfo['value'] ?? null,
-                    'url' => $resolvedUrl,
-                ];
-            }
+        if ($dateInput !== '' && !isValidDate($dateInput)) {
+            $errors[] = 'Bitte ein gültiges Datum im Format YYYY-MM-DD angeben.';
         }
 
-        if ($errors === [] && $addToMonitor) {
-            $targetDate = $dateInput !== '' ? $dateInput : (new DateTimeImmutable('now'))->format('Y-m-d');
-            $targetId = generateTargetId($urlInput, $targets, $targetDate);
-
-            $targets[] = [
-                'id' => $targetId,
-                'url' => $urlInput,
-                'date' => $targetDate,
-                'rooms' => [
-                    [
-                        'name' => 'Gesamtpreis',
-                        'room_hint' => 'Gesamtpreis',
-                        'price_regex' => PriceParser::DEFAULT_TOTAL_REGEX,
-                    ],
-                ],
-            ];
+        if ($errors === []) {
+            $resolvedUrl = $parser->interpolateUrl($urlInput, $dateInput);
 
             try {
-                writeJson(CONFIG_DIR . '/targets.json', $targets);
-                $addedTargetId = $targetId;
+                $html = $parser->fetchPage($resolvedUrl);
+                $priceInfo = $parser->extractTotalPrice($html);
+                if ($priceInfo === null) {
+                    $errors[] = 'Kein Gesamtpreis gefunden. Bitte Regex oder Seite prüfen.';
+                } else {
+                    $result = [
+                        'raw' => $priceInfo['raw'] ?? '',
+                        'value' => $priceInfo['value'] ?? null,
+                        'url' => $resolvedUrl,
+                    ];
+                }
             } catch (RuntimeException $exception) {
                 $errors[] = $exception->getMessage();
             }
+
+            if ($errors === [] && $addToMonitor) {
+                $targetDate = $dateInput !== '' ? $dateInput : (new DateTimeImmutable('now'))->format('Y-m-d');
+                $targetId = generateTargetId($urlInput, $monitors, $targetDate);
+
+                $monitors[] = [
+                    'id' => $targetId,
+                    'url' => $urlInput,
+                    'date' => $targetDate,
+                    'active' => true,
+                    'price_regex' => PriceParser::DEFAULT_TOTAL_REGEX,
+                    'created_at' => (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM),
+                ];
+
+                $storage->saveMonitors($monitors);
+                $addedTargetId = $targetId;
+                $actionMessage = 'Monitoring aktiviert.';
+            }
         }
     }
+
+    if ($action === 'toggle') {
+        $targetId = (string)($_POST['target_id'] ?? '');
+        foreach ($monitors as &$monitor) {
+            if (($monitor['id'] ?? '') === $targetId) {
+                $monitor['active'] = !($monitor['active'] ?? false);
+                $actionMessage = $monitor['active'] ? 'Monitoring aktiviert.' : 'Monitoring pausiert.';
+                break;
+            }
+        }
+        unset($monitor);
+        $storage->saveMonitors($monitors);
+    }
+
+    if ($action === 'remove') {
+        $targetId = (string)($_POST['target_id'] ?? '');
+        $monitors = array_values(array_filter(
+            $monitors,
+            static fn(array $monitor): bool => ($monitor['id'] ?? '') !== $targetId
+        ));
+        $storage->saveMonitors($monitors);
+        $actionMessage = 'Monitoring entfernt.';
+    }
+
+    if ($action === 'run_now') {
+        $monitors = runMonitorChecks($monitors, $parser, $storage);
+        $history = $storage->getHistory();
+        $actionMessage = 'Monitoring jetzt ausgeführt.';
+    }
 }
+
+$historyByMonitor = [];
+foreach ($history as $entry) {
+    $historyByMonitor[$entry['id'] ?? ''][] = $entry;
+}
+
+foreach ($historyByMonitor as &$entries) {
+    usort(
+        $entries,
+        static fn(array $a, array $b): int => strcmp((string)($b['checked_at'] ?? ''), (string)($a['checked_at'] ?? ''))
+    );
+}
+unset($entries);
 ?>
 <!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PreisMonitor</title>
+    <title>PreisMonitor Web</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 2rem;
             color: #1a1a1a;
+            background: #f8f9fb;
         }
-        form {
-            max-width: 600px;
-            display: grid;
-            gap: 1rem;
+        .card {
+            max-width: 900px;
+            margin-bottom: 2rem;
             padding: 1.5rem;
             border: 1px solid #ddd;
-            border-radius: 8px;
-            background: #fafafa;
+            border-radius: 10px;
+            background: #fff;
+        }
+        form {
+            display: grid;
+            gap: 1rem;
         }
         label {
             font-weight: bold;
         }
-        input[type="text"],
         input[type="url"],
         input[type="date"] {
             width: 100%;
@@ -227,51 +310,166 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser) {
             font-size: 0.9rem;
             color: #555;
         }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th,
+        td {
+            border-bottom: 1px solid #eee;
+            text-align: left;
+            padding: 0.6rem 0.4rem;
+            vertical-align: top;
+        }
+        .tag {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 999px;
+            background: #f1f4ff;
+            color: #2443a4;
+            font-size: 0.8rem;
+        }
+        .row-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
     <h1>PreisMonitor Web</h1>
-    <form method="post">
-        <div>
-            <label for="url">URL</label>
-            <input type="url" id="url" name="url" placeholder="https://example.com" value="<?= h($urlInput) ?>" required>
-        </div>
-        <div>
-            <label for="date">Datum (optional)</label>
-            <input type="date" id="date" name="date" value="<?= h($dateInput) ?>">
-        </div>
-        <div>
+
+    <div class="card">
+        <h2>Preis analysieren</h2>
+        <form method="post">
+            <input type="hidden" name="action" value="analyze">
+            <div>
+                <label for="url">URL</label>
+                <input type="url" id="url" name="url" placeholder="https://example.com" value="<?= h($urlInput) ?>" required>
+            </div>
+            <div>
+                <label for="date">Datum (optional)</label>
+                <input type="date" id="date" name="date" value="<?= h($dateInput) ?>">
+            </div>
             <label>
                 <input type="checkbox" name="add_to_monitor" <?= $addToMonitor ? 'checked' : '' ?>>
-                In Preisüberwachung aufnehmen
+                Monitoring aktivieren (täglicher Check)
             </label>
-        </div>
-        <button type="submit">Preis prüfen</button>
-    </form>
+            <button type="submit">Analyse</button>
+        </form>
 
-    <?php if ($errors !== []): ?>
-        <div class="error">
-            <strong>Fehler</strong>
-            <ul class="result-list">
-                <?php foreach ($errors as $error): ?>
-                    <li><?= h($error) ?></li>
+        <?php if ($errors !== []): ?>
+            <div class="error">
+                <strong>Fehler</strong>
+                <ul class="result-list">
+                    <?php foreach ($errors as $error): ?>
+                        <li><?= h($error) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($actionMessage !== null): ?>
+            <div class="notice">
+                <?= h($actionMessage) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($result !== null): ?>
+            <div class="notice">
+                <strong>Ergebnis</strong>
+                <ul class="result-list">
+                    <li>Gesamtpreis (raw): <?= h((string)$result['raw']) ?></li>
+                    <li>Gesamtpreis (numeric): <?= h((string)$result['value']) ?></li>
+                    <li class="meta">URL: <?= h((string)$result['url']) ?></li>
+                </ul>
+                <?php if ($addedTargetId !== null): ?>
+                    <p class="meta">Monitoring gespeichert: <?= h($addedTargetId) ?></p>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="card">
+        <h2>Monitoring Übersicht</h2>
+        <form method="post" style="margin-bottom: 1rem;">
+            <input type="hidden" name="action" value="run_now">
+            <button type="submit">Monitoring jetzt ausführen</button>
+        </form>
+
+        <?php if ($monitors === []): ?>
+            <p>Noch keine Monitoring-URLs angelegt.</p>
+        <?php else: ?>
+            <table>
+                <thead>
+                    <tr>
+                        <th>URL</th>
+                        <th>Status</th>
+                        <th>Letzter Check</th>
+                        <th>Historie (letzte 5)</th>
+                        <th>Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($monitors as $monitor): ?>
+                    <?php $entries = array_slice($historyByMonitor[$monitor['id']] ?? [], 0, 5); ?>
+                    <tr>
+                        <td>
+                            <div><?= h((string)$monitor['url']) ?></div>
+                            <div class="meta">Datum: <?= h((string)($monitor['date'] ?? '')) ?></div>
+                        </td>
+                        <td>
+                            <?php if ($monitor['active'] ?? false): ?>
+                                <span class="tag">aktiv</span>
+                            <?php else: ?>
+                                <span class="tag">pausiert</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?= h((string)($monitor['last_checked_at'] ?? '—')) ?><br>
+                            <?php if (!empty($monitor['last_value'])): ?>
+                                <span class="meta">Letzter Preis: <?= h((string)$monitor['last_value']) ?></span>
+                            <?php elseif (!empty($monitor['last_error'])): ?>
+                                <span class="meta">Fehler: <?= h((string)$monitor['last_error']) ?></span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($entries === []): ?>
+                                <span class="meta">Noch keine Historie.</span>
+                            <?php else: ?>
+                                <ul class="result-list">
+                                    <?php foreach ($entries as $entry): ?>
+                                        <li>
+                                            <?= h((string)($entry['checked_at'] ?? '')) ?>:
+                                            <?php if (isset($entry['value'])): ?>
+                                                <?= h((string)$entry['value']) ?>
+                                            <?php else: ?>
+                                                Fehler: <?= h((string)($entry['error'] ?? 'Unbekannt')) ?>
+                                            <?php endif; ?>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <div class="row-actions">
+                                <form method="post">
+                                    <input type="hidden" name="action" value="toggle">
+                                    <input type="hidden" name="target_id" value="<?= h((string)$monitor['id']) ?>">
+                                    <button type="submit"><?= ($monitor['active'] ?? false) ? 'Pausieren' : 'Aktivieren' ?></button>
+                                </form>
+                                <form method="post" onsubmit="return confirm('Monitoring wirklich entfernen?');">
+                                    <input type="hidden" name="action" value="remove">
+                                    <input type="hidden" name="target_id" value="<?= h((string)$monitor['id']) ?>">
+                                    <button type="submit" style="background: #999;">Entfernen</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
                 <?php endforeach; ?>
-            </ul>
-        </div>
-    <?php endif; ?>
-
-    <?php if ($result !== null): ?>
-        <div class="notice">
-            <strong>Ergebnis</strong>
-            <ul class="result-list">
-                <li>Gesamtpreis (raw): <?= h((string)$result['raw']) ?></li>
-                <li>Gesamtpreis (numeric): <?= h((string)$result['value']) ?></li>
-                <li class="meta">URL: <?= h((string)$result['url']) ?></li>
-            </ul>
-            <?php if ($addedTargetId !== null): ?>
-                <p class="meta">Target gespeichert: <?= h($addedTargetId) ?></p>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    </div>
 </body>
 </html>
