@@ -39,37 +39,68 @@ function runMonitorChecks(array $monitors, PriceParser $parser, MonitorStorage $
         $date = (string)($monitor['date'] ?? '');
         $resolvedUrl = $parser->interpolateUrl((string)$monitor['url'], $date);
 
-        try {
-            $html = $parser->fetchPage($resolvedUrl);
-            $priceInfo = $parser->extractTotalPrice($html, $monitor['price_regex'] ?? null);
+        $fetchResult = $parser->fetchPage($resolvedUrl);
+        $state = (string)($fetchResult['state'] ?? 'error');
+        $status = (int)($fetchResult['status'] ?? 0);
+        $errorMessage = null;
 
-            if ($priceInfo === null) {
-                throw new RuntimeException('Kein Gesamtpreis gefunden.');
+        if ($state === 'blocked') {
+            $errorMessage = 'blocked';
+        } elseif ($state === 'http_error') {
+            $errorMessage = 'HTTP ' . $status;
+        } elseif ($state === 'error') {
+            $errorMessage = 'Request failed';
+            if (!empty($fetchResult['error'])) {
+                $errorMessage .= ': ' . (string)$fetchResult['error'];
             }
-
-            $storage->addHistory([
-                'id' => $monitor['id'],
-                'url' => $monitor['url'],
-                'resolved_url' => $resolvedUrl,
-                'checked_at' => $now->format(DateTimeInterface::ATOM),
-                'raw' => $priceInfo['raw'] ?? '',
-                'value' => $priceInfo['value'] ?? null,
-            ]);
-
-            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
-            $monitor['last_value'] = $priceInfo['value'] ?? null;
-        } catch (RuntimeException $exception) {
-            $storage->addHistory([
-                'id' => $monitor['id'],
-                'url' => $monitor['url'],
-                'resolved_url' => $resolvedUrl,
-                'checked_at' => $now->format(DateTimeInterface::ATOM),
-                'error' => $exception->getMessage(),
-            ]);
-
-            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
-            $monitor['last_error'] = $exception->getMessage();
+        } elseif ($state === 'empty') {
+            $errorMessage = 'Empty response body';
         }
+
+        if ($errorMessage !== null) {
+            $storage->addHistory([
+                'id' => $monitor['id'],
+                'url' => $monitor['url'],
+                'resolved_url' => $resolvedUrl,
+                'checked_at' => $now->format(DateTimeInterface::ATOM),
+                'error' => $errorMessage,
+            ]);
+
+            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
+            $monitor['last_error'] = $errorMessage;
+            continue;
+        }
+
+        $html = (string)($fetchResult['body'] ?? '');
+        $priceInfo = $parser->extractTotalPrice($html, $monitor['price_regex'] ?? null);
+
+        if ($priceInfo === null) {
+            $errorMessage = 'Kein Gesamtpreis gefunden.';
+
+            $storage->addHistory([
+                'id' => $monitor['id'],
+                'url' => $monitor['url'],
+                'resolved_url' => $resolvedUrl,
+                'checked_at' => $now->format(DateTimeInterface::ATOM),
+                'error' => $errorMessage,
+            ]);
+
+            $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
+            $monitor['last_error'] = $errorMessage;
+            continue;
+        }
+
+        $storage->addHistory([
+            'id' => $monitor['id'],
+            'url' => $monitor['url'],
+            'resolved_url' => $resolvedUrl,
+            'checked_at' => $now->format(DateTimeInterface::ATOM),
+            'raw' => $priceInfo['raw'] ?? '',
+            'value' => $priceInfo['value'] ?? null,
+        ]);
+
+        $monitor['last_checked_at'] = $now->format(DateTimeInterface::ATOM);
+        $monitor['last_value'] = $priceInfo['value'] ?? null;
     }
     unset($monitor);
 
