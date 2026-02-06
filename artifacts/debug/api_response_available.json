@@ -1,0 +1,18 @@
+{
+  "rooms": [
+    {
+      "name": "Standard Room",
+      "status": "available",
+      "pricing": {
+        "total": {
+          "amount": "1.234,56",
+          "currency": "eur"
+        },
+        "night": {
+          "amount": "123,45",
+          "currency": "EUR"
+        }
+      }
+    }
+  ]
+}
