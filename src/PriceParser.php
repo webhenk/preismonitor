@@ -170,6 +170,7 @@ class PriceParser
         $blocked = false;
         if ($response !== false && $response !== null && $response !== '') {
             $blocked = $this->isBlockedHtml($response);
+        }
         $responseLength = $response === false ? 0 : strlen($response);
         $responsePreview = $response === false ? null : substr($response, 0, 500);
         $title = null;
@@ -374,6 +375,21 @@ class PriceParser
             return null;
         }
 
+        if (is_int($value) || is_float($value)) {
+            return (float)$value;
+        }
+
+        $normalized = trim((string)$value);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['.', ' '], ['', ''], $normalized);
+        $normalized = str_replace(',', '.', $normalized);
+
+        return is_numeric($normalized) ? (float)$normalized : null;
+    }
+
     public function parseApiPhase(string $html, string $baseUrl): array
     {
         $requests = $this->discoverApiRequests($html, $baseUrl);
@@ -460,7 +476,7 @@ class PriceParser
 
         if (preg_match_all(self::API_URL_PATTERN, $html, $matches)) {
             foreach ($matches[0] as $match) {
-                $urls[] = trim($match, " \t\n\r\0\x0B\"'<>\");
+                $urls[] = trim($match, " \t\n\r\0\x0B\"'<>\\" );
             }
         }
 
@@ -731,11 +747,11 @@ class PriceParser
 
         $currency = strtoupper(trim((string)$currency));
 
-        return $currency === '' ? null : $currency;
-        $normalized = str_replace(['.', ' '], ['', ''], $normalized);
-        $normalized = str_replace(',', '.', $normalized);
+        if ($currency === '') {
+            return null;
+        }
 
-        return (float)$normalized;
+        return self::CURRENCY_MAP[$currency] ?? $currency;
     }
 
     private function normalizeHeaderArray($headers): array
@@ -849,6 +865,8 @@ class PriceParser
         }
 
         file_put_contents($path, $encoded);
+    }
+
     private function resolveStrategyForUrl(string $url): array
     {
         $host = strtolower((string)parse_url($url, PHP_URL_HOST));
@@ -1079,12 +1097,6 @@ class PriceParser
         }
 
         return (float)$clean;
-    }
-
-    private function normalizeCurrency(string $currency): ?string
-    {
-        $currency = strtoupper(trim($currency));
-        return self::CURRENCY_MAP[$currency] ?? null;
     }
 
     private function detectCurrency(string $text): ?string
