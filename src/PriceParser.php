@@ -307,6 +307,73 @@ class PriceParser
         ];
     }
 
+    public function parseApiResponse(string $json): array
+    {
+        $payload = json_decode($json, true);
+        if (!is_array($payload)) {
+            throw new RuntimeException('Invalid API response payload.');
+        }
+
+        $rooms = $payload['rooms'] ?? null;
+        if ($rooms === null && isset($payload['room'])) {
+            $rooms = [$payload['room']];
+        }
+
+        if (!is_array($rooms)) {
+            throw new RuntimeException('API response does not contain rooms.');
+        }
+
+        $parsed = [];
+        foreach ($rooms as $room) {
+            if (!is_array($room)) {
+                continue;
+            }
+            $parsed[] = $this->parseApiRoom($room);
+        }
+
+        if ($parsed === []) {
+            throw new RuntimeException('API response does not contain valid room entries.');
+        }
+
+        return $parsed;
+    }
+
+    private function parseApiRoom(array $room): array
+    {
+        $pricing = $room['pricing'] ?? [];
+        $total = $pricing['total']['amount'] ?? $pricing['total'] ?? null;
+        $night = $pricing['night']['amount'] ?? $pricing['night'] ?? null;
+        $currency = $pricing['total']['currency'] ?? $pricing['night']['currency'] ?? $room['currency'] ?? null;
+
+        $blocked = false;
+        if (isset($room['blocked'])) {
+            $blocked = (bool)$room['blocked'];
+        }
+
+        $status = strtolower((string)($room['status'] ?? ''));
+        if (in_array($status, ['blocked', 'sold_out', 'unavailable', 'closed'], true)) {
+            $blocked = true;
+        }
+
+        if (array_key_exists('available', $room) && $room['available'] === false) {
+            $blocked = true;
+        }
+
+        return [
+            'name' => (string)($room['name'] ?? ''),
+            'total' => $this->normalizeApiValue($total),
+            'night' => $this->normalizeApiValue($night),
+            'currency' => $this->normalizeCurrency($currency),
+            'blocked' => $blocked,
+        ];
+    }
+
+    private function normalizeApiValue(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
     public function parseApiPhase(string $html, string $baseUrl): array
     {
         $requests = $this->discoverApiRequests($html, $baseUrl);
@@ -638,6 +705,33 @@ class PriceParser
             return null;
         }
 
+        $normalized = str_replace(' ', '', $normalized);
+        $hasComma = str_contains($normalized, ',');
+        $hasDot = str_contains($normalized, '.');
+
+        if ($hasComma && $hasDot) {
+            $normalized = str_replace('.', '', $normalized);
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif ($hasComma) {
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif (substr_count($normalized, '.') > 1) {
+            $parts = explode('.', $normalized);
+            $decimal = array_pop($parts);
+            $normalized = implode('', $parts) . '.' . $decimal;
+        }
+
+        return (float)$normalized;
+    }
+
+    private function normalizeCurrency(mixed $currency): ?string
+    {
+        if ($currency === null) {
+            return null;
+        }
+
+        $currency = strtoupper(trim((string)$currency));
+
+        return $currency === '' ? null : $currency;
         $normalized = str_replace(['.', ' '], ['', ''], $normalized);
         $normalized = str_replace(',', '.', $normalized);
 

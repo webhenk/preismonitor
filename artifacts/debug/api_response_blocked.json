@@ -1,0 +1,14 @@
+{
+  "rooms": [
+    {
+      "name": "Suite",
+      "status": "blocked",
+      "pricing": {
+        "total": {
+          "amount": "$499.99",
+          "currency": "USD"
+        }
+      }
+    }
+  ]
+}
