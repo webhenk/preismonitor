@@ -179,6 +179,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $parser instanceof PriceParser && $
                     'effective_url' => $fetchResult['effective_url'] ?? $resolvedUrl,
                     'status' => $fetchResult['status'] ?? 0,
                     'content_type' => $fetchResult['content_type'] ?? '',
+                    'response_length' => $fetchResult['response_length'] ?? 0,
+                    'response_preview' => $fetchResult['response_preview'] ?? null,
+                    'title' => $fetchResult['title'] ?? null,
+                    'response_path' => $fetchResult['response_path'] ?? null,
                     'size_download' => $fetchResult['size_download'] ?? 0.0,
                     'total_time' => $fetchResult['total_time'] ?? 0.0,
                     'error' => $fetchResult['error'] ?? null,
@@ -452,11 +456,18 @@ unset($entries);
                     <li>URL (effektiv): <?= h((string)$debugInfo['effective_url']) ?></li>
                     <li>HTTP-Status: <?= h((string)$debugInfo['status']) ?></li>
                     <li>Content-Type: <?= h((string)$debugInfo['content_type']) ?></li>
+                    <li>Response-Länge: <?= h((string)$debugInfo['response_length']) ?> bytes</li>
+                    <li>Title: <?= h((string)($debugInfo['title'] ?? '—')) ?></li>
+                    <li>Response gespeichert: <?= h((string)($debugInfo['response_path'] ?? '—')) ?></li>
                     <li>Antwortgröße: <?= h((string)round((float)$debugInfo['size_download'])) ?> bytes</li>
                     <li>Antwortzeit: <?= h((string)round((float)$debugInfo['total_time'], 3)) ?> s</li>
                     <li>Fehler: <?= h((string)($debugInfo['error'] ?? '—')) ?></li>
                     <li>Hinweistext "Gesamtpreis" gefunden: <?= $debugHintPos !== null && $debugHintPos !== false ? 'ja (Pos. ' . h((string)$debugHintPos) . ')' : 'nein' ?></li>
                 </ul>
+                <?php if (!empty($debugInfo['response_preview'])): ?>
+                    <strong>Erste 500 Zeichen</strong>
+                    <pre><?= h((string)$debugInfo['response_preview']) ?></pre>
+                <?php endif; ?>
                 <?php if ($debugSnippet !== null && $debugSnippet !== ''): ?>
                     <strong>HTML-Ausschnitt</strong>
                     <pre><?= h($debugSnippet) ?></pre>
