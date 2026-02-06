@@ -228,27 +228,11 @@ class PriceParser
     public function fetchDynamicPage(string $url): array
     {
         $baseDir = dirname(__DIR__);
-        $scriptPath = $baseDir . '/scripts/robinson-playwright-worker.js';
+        $scriptPath = $baseDir . '/tools/robinson_playwright.js';
         if (!file_exists($scriptPath)) {
             return [
                 'state' => 'error',
-                'error' => 'Missing Playwright worker script.',
-                'status' => 0,
-                'body' => null,
-                'blocked' => false,
-            ];
-        }
-
-        $parsedUrl = parse_url($url);
-        $host = $parsedUrl['host'] ?? 'unknown-host';
-        $safeHost = preg_replace('/[^a-z0-9.-]+/i', '-', $host) ?? 'unknown-host';
-        $timestamp = (new DateTimeImmutable('now'))->format('Ymd_His');
-        $outputDir = $baseDir . '/artifacts/dynamic/' . $safeHost . '_' . $timestamp;
-
-        if (!is_dir($outputDir) && !mkdir($outputDir, 0775, true) && !is_dir($outputDir)) {
-            return [
-                'state' => 'error',
-                'error' => 'Unable to create dynamic output directory.',
+                'error' => 'Missing Playwright runner script.',
                 'status' => 0,
                 'body' => null,
                 'blocked' => false,
@@ -256,10 +240,9 @@ class PriceParser
         }
 
         $command = sprintf(
-            'node %s %s %s',
+            'node %s %s',
             escapeshellarg($scriptPath),
             escapeshellarg($url),
-            escapeshellarg($outputDir),
         );
 
         $descriptorSpec = [
@@ -271,7 +254,7 @@ class PriceParser
         if (!is_resource($process)) {
             return [
                 'state' => 'error',
-                'error' => 'Unable to start Playwright worker.',
+                'error' => 'Unable to start Playwright runner.',
                 'status' => 0,
                 'body' => null,
                 'blocked' => false,
@@ -289,24 +272,38 @@ class PriceParser
         if (!is_array($decoded)) {
             return [
                 'state' => 'error',
-                'error' => $stderr !== '' ? trim($stderr) : 'Invalid Playwright worker output.',
+                'error' => $stderr !== '' ? trim($stderr) : 'Invalid Playwright runner output.',
                 'status' => 0,
                 'body' => null,
                 'blocked' => false,
             ];
         }
 
-        $state = (string)($decoded['state'] ?? 'error');
         $blocked = (bool)($decoded['blocked'] ?? false);
-        $error = $decoded['error'] ?? ($exitCode !== 0 ? 'Playwright worker failed.' : null);
+        $priceValue = $decoded['priceValue'] ?? null;
+        $state = ($blocked || $priceValue === null) ? 'dynamic_no_price' : 'ok';
+        $error = $decoded['error'] ?? ($exitCode !== 0 ? 'Playwright runner failed.' : null);
+        $price = null;
+        if ($priceValue !== null) {
+            $price = [
+                'raw' => $decoded['priceText'] ?? null,
+                'value' => (float)$priceValue,
+                'currency' => $decoded['currency'] ?? null,
+            ];
+        }
 
         return [
             'state' => $state,
             'error' => $error,
             'status' => $exitCode,
-            'body' => $decoded,
+            'body' => [
+                'price' => $price,
+                'blocked' => $blocked,
+                'htmlPath' => $decoded['htmlPath'] ?? null,
+                'screenshotPath' => $decoded['screenshotPath'] ?? null,
+                'xhrHitsCount' => $decoded['xhrHitsCount'] ?? 0,
+            ],
             'blocked' => $blocked,
-            'artifacts' => $decoded['artifacts'] ?? [],
         ];
     }
 
