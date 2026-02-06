@@ -53,10 +53,29 @@ class PriceParser
     {
         $userAgent = $this->settings['user_agent'] ?? 'PreisMonitor/1.0 (+https://example.com)';
         $timeout = (int)($this->settings['timeout_seconds'] ?? 20);
+        $baseDir = dirname(__DIR__);
+        $debugDir = $baseDir . '/artifacts/debug';
+        $cookieDir = $debugDir . '/cookies';
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? 'unknown-host';
+        $safeHost = preg_replace('/[^a-z0-9.-]+/i', '-', $host) ?? 'unknown-host';
+        $timestamp = (new DateTimeImmutable('now'))->format('Ymd_His');
+        $responseFileName = sprintf('%s_%s.html', $safeHost, $timestamp);
+        $responseFilePath = $debugDir . '/' . $responseFileName;
+        $responseFileRelative = 'artifacts/debug/' . $responseFileName;
+        $cookieFile = $cookieDir . '/' . $safeHost . '.txt';
 
         $ch = curl_init($url);
         if ($ch === false) {
             throw new RuntimeException("Unable to initialize curl for {$url}");
+        }
+
+        if (!is_dir($cookieDir) && !mkdir($cookieDir, 0775, true) && !is_dir($cookieDir)) {
+            throw new RuntimeException('Unable to create debug cookie directory.');
+        }
+
+        if (!is_dir($debugDir) && !mkdir($debugDir, 0775, true) && !is_dir($debugDir)) {
+            throw new RuntimeException('Unable to create debug directory.');
         }
 
         curl_setopt_array($ch, [
@@ -65,6 +84,12 @@ class PriceParser
             CURLOPT_USERAGENT => $userAgent,
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_COOKIEJAR => $cookieFile,
+            CURLOPT_COOKIEFILE => $cookieFile,
+            CURLOPT_HTTPHEADER => [
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
+            ],
         ]);
 
         $response = curl_exec($ch);
@@ -80,6 +105,18 @@ class PriceParser
         $blocked = false;
         if ($response !== false && $response !== null && $response !== '') {
             $blocked = $this->isBlockedHtml($response);
+        $responseLength = $response === false ? 0 : strlen($response);
+        $responsePreview = $response === false ? null : substr($response, 0, 500);
+        $title = null;
+        if ($response !== false && preg_match('/<title[^>]*>(.*?)<\/title>/is', $response, $matches)) {
+            $title = trim((string)preg_replace('/\s+/', ' ', $matches[1]));
+        }
+
+        $responsePath = null;
+        if ($response !== false) {
+            if (file_put_contents($responseFilePath, $response) !== false) {
+                $responsePath = $responseFileRelative;
+            }
         }
 
         return [
@@ -91,6 +128,10 @@ class PriceParser
             'size_download' => $sizeDownload,
             'effective_url' => $effectiveUrl,
             'blocked' => $blocked,
+            'response_length' => $responseLength,
+            'response_preview' => $responsePreview,
+            'title' => $title,
+            'response_path' => $responsePath,
         ];
     }
 
