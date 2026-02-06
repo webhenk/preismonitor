@@ -47,6 +47,8 @@ function writeDailyResult(array $entries): string
             $entry['room_name'],
             $entry['price_raw'] ?? 'not_found',
             $entry['price_value'] ?? 'n/a',
+            $entry['price_currency'] ?? 'n/a',
+            $entry['price_context'] ?? 'n/a',
             $entry['url'],
         ]);
     }
@@ -124,11 +126,29 @@ function main(): void
             continue;
         }
 
-        $html = (string)($fetchResult['body'] ?? '');
+        $rooms = $target['rooms'] ?? [];
+        if ($rooms === []) {
+            $rooms = [
+                ['name' => 'Dynamic price'],
+            ];
+        }
 
-        foreach ($target['rooms'] ?? [] as $room) {
+        $dynamicPayload = null;
+        if ($parser->shouldUseDynamicStrategy($url)) {
+            $dynamicPayload = $fetchResult['body'] ?? null;
+        }
+
+        $html = $dynamicPayload === null ? (string)($fetchResult['body'] ?? '') : '';
+
+        foreach ($rooms as $room) {
             $roomName = $room['name'] ?? 'Unnamed room';
-            $priceInfo = $parser->extractPrice($html, $room);
+            $priceInfo = null;
+
+            if ($dynamicPayload !== null) {
+                $priceInfo = $dynamicPayload['price'] ?? null;
+            } elseif (isset($room['price_regex'])) {
+                $priceInfo = $parser->extractPrice($html, $room);
+            }
 
             $entry = [
                 'timestamp' => (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM),
@@ -136,6 +156,8 @@ function main(): void
                 'room_name' => $roomName,
                 'price_raw' => $priceInfo['raw'] ?? null,
                 'price_value' => $priceInfo['value'] ?? null,
+                'price_currency' => $priceInfo['currency'] ?? null,
+                'price_context' => $priceInfo['context'] ?? null,
                 'url' => $url,
                 'threshold' => $room['threshold'] ?? null,
             ];

@@ -73,6 +73,10 @@ class PriceParser
         '£' => 'GBP',
         'GBP' => 'GBP',
     ];
+    private const DYNAMIC_HOSTS = [
+        'robinson.com',
+        'www.robinson.com',
+    ];
 
     private array $settings;
     private const API_URL_PATTERN = '/(?:(?:https?:)?\/\/[^\s"\'<>]+|\/[a-z0-9_\-\/.]+\?(?:[^\s"\'<>]+)|\/[a-z0-9_\-\/.]*(?:api|graphql|offers|rates|prices)[^\s"\'<>]*)/i';
@@ -93,6 +97,10 @@ class PriceParser
 
     public function fetchPage(string $url): array
     {
+        if ($this->shouldUseDynamicStrategy($url)) {
+            return $this->fetchDynamicPage($url);
+        }
+
         $result = $this->fetchPageWithInfo($url);
         $error = $result['error'];
         $status = (int)($result['status'] ?? 0);
@@ -198,6 +206,107 @@ class PriceParser
             'response_preview' => $responsePreview,
             'title' => $title,
             'response_path' => $responsePath,
+        ];
+    }
+
+    public function shouldUseDynamicStrategy(string $url): bool
+    {
+        $host = strtolower((string)parse_url($url, PHP_URL_HOST));
+        if ($host === '') {
+            return false;
+        }
+
+        foreach (self::DYNAMIC_HOSTS as $dynamicHost) {
+            if ($host === $dynamicHost || str_ends_with($host, '.' . $dynamicHost)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function fetchDynamicPage(string $url): array
+    {
+        $baseDir = dirname(__DIR__);
+        $scriptPath = $baseDir . '/scripts/robinson-playwright-worker.js';
+        if (!file_exists($scriptPath)) {
+            return [
+                'state' => 'error',
+                'error' => 'Missing Playwright worker script.',
+                'status' => 0,
+                'body' => null,
+                'blocked' => false,
+            ];
+        }
+
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? 'unknown-host';
+        $safeHost = preg_replace('/[^a-z0-9.-]+/i', '-', $host) ?? 'unknown-host';
+        $timestamp = (new DateTimeImmutable('now'))->format('Ymd_His');
+        $outputDir = $baseDir . '/artifacts/dynamic/' . $safeHost . '_' . $timestamp;
+
+        if (!is_dir($outputDir) && !mkdir($outputDir, 0775, true) && !is_dir($outputDir)) {
+            return [
+                'state' => 'error',
+                'error' => 'Unable to create dynamic output directory.',
+                'status' => 0,
+                'body' => null,
+                'blocked' => false,
+            ];
+        }
+
+        $command = sprintf(
+            'node %s %s %s',
+            escapeshellarg($scriptPath),
+            escapeshellarg($url),
+            escapeshellarg($outputDir),
+        );
+
+        $descriptorSpec = [
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($command, $descriptorSpec, $pipes, $baseDir);
+        if (!is_resource($process)) {
+            return [
+                'state' => 'error',
+                'error' => 'Unable to start Playwright worker.',
+                'status' => 0,
+                'body' => null,
+                'blocked' => false,
+            ];
+        }
+
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $exitCode = proc_close($process);
+        $decoded = json_decode(trim((string)$stdout), true);
+
+        if (!is_array($decoded)) {
+            return [
+                'state' => 'error',
+                'error' => $stderr !== '' ? trim($stderr) : 'Invalid Playwright worker output.',
+                'status' => 0,
+                'body' => null,
+                'blocked' => false,
+            ];
+        }
+
+        $state = (string)($decoded['state'] ?? 'error');
+        $blocked = (bool)($decoded['blocked'] ?? false);
+        $error = $decoded['error'] ?? ($exitCode !== 0 ? 'Playwright worker failed.' : null);
+
+        return [
+            'state' => $state,
+            'error' => $error,
+            'status' => $exitCode,
+            'body' => $decoded,
+            'blocked' => $blocked,
+            'artifacts' => $decoded['artifacts'] ?? [],
         ];
     }
 
