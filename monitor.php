@@ -106,7 +106,25 @@ function main(): void
         $url = $parser->interpolateUrl($target['url'], $date);
 
         echo "Fetching {$targetId}..." . PHP_EOL;
-        $html = $parser->fetchPage($url);
+        $fetchResult = $parser->fetchPage($url);
+        $state = (string)($fetchResult['state'] ?? 'error');
+        $status = (int)($fetchResult['status'] ?? 0);
+
+        if ($state !== 'ok') {
+            $message = match ($state) {
+                'blocked' => 'blocked',
+                'http_error' => 'HTTP ' . $status,
+                'empty' => 'Empty response body',
+                default => 'Request failed',
+            };
+            if ($state === 'error' && !empty($fetchResult['error'])) {
+                $message .= ': ' . (string)$fetchResult['error'];
+            }
+            echo "Skipping {$targetId}: {$message}" . PHP_EOL;
+            continue;
+        }
+
+        $html = (string)($fetchResult['body'] ?? '');
 
         foreach ($target['rooms'] ?? [] as $room) {
             $roomName = $room['name'] ?? 'Unnamed room';
