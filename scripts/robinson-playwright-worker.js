@@ -198,7 +198,10 @@ async function main() {
   const priceResponses = [];
   const jsonArtifacts = [];
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     locale: 'de-DE',
     timezoneId: 'Europe/Berlin',

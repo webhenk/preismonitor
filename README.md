@@ -33,6 +33,8 @@ GET /cron.php
 Beispiel für Render:
 - Webservice startet mit dem Dockerfile.
 - Separater Render Cron Job ruft täglich `https://<dein-service>.onrender.com/cron.php` auf.
+- Build Command (Render): `npm install`
+- Post-Install: `npx playwright install --with-deps chromium`
 
 Die Daten werden persistent in `data/` gespeichert:
 

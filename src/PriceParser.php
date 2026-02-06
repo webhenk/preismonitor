@@ -225,17 +225,121 @@ class PriceParser
         return false;
     }
 
+    public function isRobinsonBookingUrl(string $url): bool
+    {
+        $host = strtolower((string)parse_url($url, PHP_URL_HOST));
+        if ($host !== 'www.robinson.com') {
+            return false;
+        }
+
+        $path = (string)parse_url($url, PHP_URL_PATH);
+        return str_starts_with($path, '/de/de/buchen');
+    }
+
+    public function runPlaywrightRobinson(string $url): array
+    {
+        $runnerResult = $this->executePlaywrightRunner($url);
+        if ($runnerResult['decoded'] === null) {
+            return [
+                'state' => 'error',
+                'error' => $runnerResult['error'] ?? 'Invalid Playwright runner output.',
+                'status' => $runnerResult['status'] ?? 0,
+                'blocked' => false,
+                'runner' => 'playwright',
+                'rendered_html_size' => 0,
+                'xhr_hits' => 0,
+                'consent_clicked' => false,
+                'body_text_preview' => null,
+                'url_effective' => null,
+                'http_status' => null,
+            ];
+        }
+
+        $decoded = $runnerResult['decoded'];
+        $blocked = (bool)($decoded['blocked'] ?? false);
+        $priceValue = $decoded['price_value'] ?? null;
+        $state = ($blocked || $priceValue === null) ? 'dynamic_no_price' : 'ok';
+        $price = null;
+        if ($priceValue !== null) {
+            $price = [
+                'raw' => $decoded['price_text'] ?? null,
+                'value' => (float)$priceValue,
+                'currency' => $decoded['currency'] ?? null,
+            ];
+        }
+
+        return [
+            'state' => $state,
+            'error' => $decoded['error'] ?? ($runnerResult['status'] !== 0 ? 'Playwright runner failed.' : null),
+            'status' => $runnerResult['status'],
+            'price' => $price,
+            'blocked' => $blocked,
+            'runner' => $decoded['runner'] ?? 'playwright',
+            'rendered_html_size' => $decoded['rendered_html_size'] ?? 0,
+            'xhr_hits' => $decoded['xhr_hits'] ?? 0,
+            'consent_clicked' => $decoded['consent_clicked'] ?? false,
+            'body_text_preview' => $decoded['body_text_preview'] ?? null,
+            'url_effective' => $decoded['url_effective'] ?? null,
+            'http_status' => $decoded['http_status'] ?? null,
+        ];
+    }
+
     public function fetchDynamicPage(string $url): array
+    {
+        $runnerResult = $this->executePlaywrightRunner($url);
+        if ($runnerResult['decoded'] === null) {
+            return [
+                'state' => 'error',
+                'error' => $runnerResult['error'] ?? 'Missing Playwright runner script.',
+                'status' => 0,
+                'body' => null,
+                'blocked' => false,
+            ];
+        }
+
+        $decoded = $runnerResult['decoded'];
+        $blocked = (bool)($decoded['blocked'] ?? false);
+        $priceValue = $decoded['price_value'] ?? null;
+        $state = ($blocked || $priceValue === null) ? 'dynamic_no_price' : 'ok';
+        $error = $decoded['error'] ?? ($runnerResult['status'] !== 0 ? 'Playwright runner failed.' : null);
+        $price = null;
+        if ($priceValue !== null) {
+            $price = [
+                'raw' => $decoded['price_text'] ?? null,
+                'value' => (float)$priceValue,
+                'currency' => $decoded['currency'] ?? null,
+            ];
+        }
+
+        return [
+            'state' => $state,
+            'error' => $error,
+            'status' => $runnerResult['status'],
+            'body' => [
+                'price' => $price,
+                'blocked' => $blocked,
+                'xhrHitsCount' => $decoded['xhr_hits'] ?? 0,
+                'urlRequested' => $decoded['url_requested'] ?? null,
+                'urlEffective' => $decoded['url_effective'] ?? null,
+                'httpStatus' => $decoded['http_status'] ?? null,
+                'runner' => $decoded['runner'] ?? 'playwright',
+                'renderedHtmlSize' => $decoded['rendered_html_size'] ?? 0,
+                'consentClicked' => $decoded['consent_clicked'] ?? false,
+                'bodyTextPreview' => $decoded['body_text_preview'] ?? null,
+            ],
+            'blocked' => $blocked,
+        ];
+    }
+
+    private function executePlaywrightRunner(string $url): array
     {
         $baseDir = dirname(__DIR__);
         $scriptPath = $baseDir . '/tools/robinson_playwright.js';
         if (!file_exists($scriptPath)) {
             return [
-                'state' => 'error',
+                'decoded' => null,
                 'error' => 'Missing Playwright runner script.',
                 'status' => 0,
-                'body' => null,
-                'blocked' => false,
             ];
         }
 
@@ -253,11 +357,9 @@ class PriceParser
         $process = proc_open($command, $descriptorSpec, $pipes, $baseDir);
         if (!is_resource($process)) {
             return [
-                'state' => 'error',
+                'decoded' => null,
                 'error' => 'Unable to start Playwright runner.',
                 'status' => 0,
-                'body' => null,
-                'blocked' => false,
             ];
         }
 
@@ -271,40 +373,16 @@ class PriceParser
 
         if (!is_array($decoded)) {
             return [
-                'state' => 'error',
+                'decoded' => null,
                 'error' => $stderr !== '' ? trim($stderr) : 'Invalid Playwright runner output.',
-                'status' => 0,
-                'body' => null,
-                'blocked' => false,
-            ];
-        }
-
-        $blocked = (bool)($decoded['blocked'] ?? false);
-        $priceValue = $decoded['price_value'] ?? null;
-        $state = ($blocked || $priceValue === null) ? 'dynamic_no_price' : 'ok';
-        $error = $decoded['error'] ?? ($exitCode !== 0 ? 'Playwright runner failed.' : null);
-        $price = null;
-        if ($priceValue !== null) {
-            $price = [
-                'raw' => $decoded['price_text'] ?? null,
-                'value' => (float)$priceValue,
-                'currency' => $decoded['currency'] ?? null,
+                'status' => $exitCode,
             ];
         }
 
         return [
-            'state' => $state,
-            'error' => $error,
+            'decoded' => $decoded,
+            'error' => $decoded['error'] ?? null,
             'status' => $exitCode,
-            'body' => [
-                'price' => $price,
-                'blocked' => $blocked,
-                'xhrHitsCount' => $decoded['xhr_hits'] ?? 0,
-                'urlRequested' => $decoded['url_requested'] ?? null,
-                'urlEffective' => $decoded['url_effective'] ?? null,
-                'httpStatus' => $decoded['http_status'] ?? null,
-            ],
-            'blocked' => $blocked,
         ];
     }
 
